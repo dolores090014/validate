@@ -18,6 +18,8 @@ class validate {
     const SOURCE_JSON = 1 << 4; //decode the http body if it is a json
     const SOURCE_HEADER = 1 << 5;
     const SOURCE_SESSION = 1 << 6;
+//    const ERR_STRUCT_KV = 1;
+//    const ERR_STRUCT_DIS = 2;
 
     private $_paramName = false;
     private $_paramValue = "";
@@ -31,6 +33,19 @@ class validate {
     }
 
     //****************************************** export **********************************************
+
+    /**快捷方法
+     * @param $name
+     * @param string $default
+     * @return $this
+     */
+    public static function JSON($name, $default = self::DEFAULT_VALUE) {
+        return (new self($name))->source(validate::SOURCE_JSON, $default);
+    }
+
+    public static function GET($name, $default = self::DEFAULT_VALUE) {
+        return (new self($name))->source(validate::SOURCE_GET, $default);
+    }
 
     /** 通过返回数据，不通过返回false，调用error方法可以输出错误信息
      * @return bool|string
@@ -54,10 +69,37 @@ class validate {
     }
 
     /**返回错误信息
-     * @return mixed
+     * @param $type
+     * @return array
      */
     public function error() {
         return $this->err;
+    }
+
+    /**
+     *
+     */
+    public function parseErr() {
+        return [
+            "name" => ($this->subName ? $this->subName : $this->_paramName),
+            "disc" => $this->err
+        ];
+    }
+
+    public function panic() {
+        if ($this->failed()) {
+            throw new \Error(serialize($this->parseErr()));
+        }
+        return $this;
+    }
+
+    public function disposeErr($fun) {
+        if ($this->failed()) {
+            if (is_callable($fun)) {
+                $fun($this->parseErr());
+            }
+        }
+        return $this;
     }
 
     /**设置参数别名
@@ -106,7 +148,7 @@ class validate {
      */
     public function callBack($fun) {
         if (is_callable($fun)) {
-            $fun($this->_paramValue, $this);
+            $fun($this, $this->_paramValue);
         }
         return $this;
     }
@@ -120,11 +162,11 @@ class validate {
     private function _error($err) {
         $this->_failed = true;
         if (is_callable($err)) {
-            $err($this->error());
+            $err($this);
         } else if (!isset($this->err) && !is_string($err) && !empty($err)) {
             $this->_panic("err must be function or string which not empty");
         } else {
-            $this->err = [($this->subName ? $this->subName : $this->_paramName) => $err];
+            $this->err = $err;
         }
     }
 
@@ -138,8 +180,14 @@ class validate {
     }
 
     private function _getParam($source) {
+        $effect = function ($param) {
+            if ((is_array($param) && empty($param)) || (is_string($param) && $param === "")) {
+                return false;
+            }
+            return true;
+        };
         if (($source | self::SOURCE_GET) == $source) {
-            if (isset($_GET[$this->_paramName]) && !empty($_GET[$this->_paramName])) {
+            if (isset($_GET[$this->_paramName]) && $effect($_GET[$this->_paramName])) {
                 $this->_paramValue = $_GET[$this->_paramName];
                 return $this;
             } else {
@@ -147,7 +195,7 @@ class validate {
             }
         }
         if (($source | self::SOURCE_POST) == $source) {
-            if (isset($_POST[$this->_paramName]) && !empty($_POST[$this->_paramName])) {
+            if (isset($_POST[$this->_paramName]) && $effect($_POST[$this->_paramName])) {
                 $this->_paramValue = $_POST[$this->_paramName];
                 return $this;
             } else {
@@ -156,7 +204,7 @@ class validate {
         }
         if (($source | self::SOURCE_HEADER) == $source) {
             $k = "HTTP" . strtoupper($this->_paramName);
-            if (isset($_SERVER[$k]) && !empty($_SERVER[$k])) {
+            if (isset($_SERVER[$k]) && $effect($_SERVER[$k])) {
                 $this->_paramValue = $_SERVER[$k];
                 return $this;
             } else {
@@ -164,7 +212,7 @@ class validate {
             }
         }
         if (($source | self::SOURCE_SESSION) == $source) {
-            if (isset($_SESSION[$this->_paramName]) && !empty($_SESSION[$this->_paramName])) {
+            if (isset($_SESSION[$this->_paramName]) && $effect($_SESSION[$this->_paramName])) {
                 $this->_paramValue = $_SESSION[$this->_paramName];
                 return $this;
             } else {
@@ -173,7 +221,7 @@ class validate {
         }
         if (($source | self::SOURCE_PUT_AND_DELETE) == $source) {
             @parse_str(file_get_contents('php://input'), $p);
-            if (isset($p) && empty($p) && isset($p[$this->_paramName]) && !empty($p[$this->_paramName])) {
+            if (isset($p) && isset($p[$this->_paramName]) && $effect($p) && $effect($p[$this->_paramName])) {
                 $this->_paramValue = $p[$this->_paramName];
                 return $this;
             } else {
@@ -184,14 +232,14 @@ class validate {
             $jsonStr = @file_get_contents('php://input');
             $this->_paramValue = self::DEFAULT_VALUE;
             $json = json_decode($jsonStr, true);
-            if (isset($json) && $jsonStr != $json && isset($json[$this->_paramName]) && !empty($json[$this->_paramName])) {
+            if (isset($json) && isset($json[$this->_paramName]) && $effect($json) && $jsonStr != $json && $effect($json[$this->_paramName])) {
                 $this->_paramValue = $json[$this->_paramName];
                 return $this;
             } else {
                 $this->_paramValue = self::DEFAULT_VALUE;
             }
         }
-        if (empty($this->_paramValue)) {
+        if (!isset($this->_paramValue) || !$effect($this->_paramValue)) {
             $this->_paramValue = $source;
         }
         return $this;
@@ -223,8 +271,7 @@ class validate {
         if (isset($this->_failed) && $this->_failed === true) {
             return $this;
         }
-
-        if (!isset($this->_paramValue) || empty($this->_paramValue) || $this->_paramValue === self::DEFAULT_VALUE) {
+        if (!isset($this->_paramValue) || $this->_paramValue === self::DEFAULT_VALUE) {
             $this->_error($err);
         }
         return $this;
@@ -269,11 +316,11 @@ class validate {
             return $this;
         }
 
-        if ($max >= $min) {
+        if ($max < $min) {
             $this->_panic("min must less than max");
         }
         $this->_paramValue = (string)$this->_paramValue;
-        if (preg_match("/[\u4e00-\u9fa5]/", $this->_paramValue)) {
+        if (preg_match("/^<\x4e00-\x9fa5>+$/", $this->_paramValue)) {
             if (mb_strlen($this->_paramValue) < $min || mb_strlen($this->_paramValue) > $max) {
                 $this->_error($err);
             }
