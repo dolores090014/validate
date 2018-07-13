@@ -14,7 +14,7 @@ class validate {
     const SOURCE_GET = 1 << 0;
     const SOURCE_POST = 1 << 1;
     const SOURCE_REQUEST = self::SOURCE_GET | self::SOURCE_POST;
-    const SOURCE_PUT_AND_DELETE = 1 << 3; //parse the http body
+    const SOURCE_PUT_OR_DELETE = 1 << 3; //parse the http body
     const SOURCE_JSON = 1 << 4; //decode the http body if it is a json
     const SOURCE_HEADER = 1 << 5;
     const SOURCE_SESSION = 1 << 6;
@@ -45,6 +45,18 @@ class validate {
 
     public static function GET($name, $default = self::DEFAULT_VALUE) {
         return (new self($name))->source(validate::SOURCE_GET, $default);
+    }
+
+    public static function POST($name, $default = self::DEFAULT_VALUE) {
+        return (new self($name))->source(validate::SOURCE_POST, $default);
+    }
+
+    public static function PUT($name, $default = self::DEFAULT_VALUE) {
+        return (new self($name))->source(validate::SOURCE_PUT_OR_DELETE, $default);
+    }
+
+    public static function DELETE($name, $default = self::DEFAULT_VALUE) {
+        return (new self($name))->source(validate::SOURCE_PUT_OR_DELETE, $default);
     }
 
     /** 通过返回数据，不通过返回false，调用error方法可以输出错误信息
@@ -88,7 +100,7 @@ class validate {
 
     public function panic() {
         if ($this->failed()) {
-            throw new \Error(serialize($this->parseErr()));
+            throw new \ErrorException(serialize($this->parseErr()));
         }
         return $this;
     }
@@ -219,10 +231,12 @@ class validate {
                 $this->_paramValue = self::DEFAULT_VALUE;
             }
         }
-        if (($source | self::SOURCE_PUT_AND_DELETE) == $source) {
-            @parse_str(file_get_contents('php://input'), $p);
-            if (isset($p) && isset($p[$this->_paramName]) && $effect($p) && $effect($p[$this->_paramName])) {
-                $this->_paramValue = $p[$this->_paramName];
+        if (($source | self::SOURCE_PUT_OR_DELETE) == $source) {
+            $body = [];
+            @parse_str(file_get_contents('php://input'), $body);
+            $request = array_merge($_REQUEST,$body);
+            if (isset($request) && isset($request[$this->_paramName]) && $effect($request) && $effect($request[$this->_paramName])) {
+                $this->_paramValue = $request[$this->_paramName];
                 return $this;
             } else {
                 $this->_paramValue = self::DEFAULT_VALUE;
